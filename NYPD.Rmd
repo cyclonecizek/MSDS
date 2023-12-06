@@ -1,0 +1,190 @@
+---
+title: "NYPD Crime Project"
+author: "Brian Cizek"
+output:
+  html_document: default
+  pdf_document: default
+date: "2023-11-27"
+---
+
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(lubridate)
+library(plotly)
+library(ggplot2)
+```
+
+
+## Get the data
+
+```{r get_nypd_data}
+nypd = read.csv("https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD")
+```
+
+
+## Clean the data
+
+```{r clean_data}
+
+#Remove the columns that I am not interested in for this project
+nypd <- nypd %>% 
+  select(-c(Latitude, Longitude, Lon_Lat, X_COORD_CD, Y_COORD_CD))
+
+#Create some new columns that I will use for analysis
+nypd <- nypd %>% 
+  mutate(OCCUR_DATE = mdy(OCCUR_DATE),
+         OCCUR_TIME = hms(OCCUR_TIME),
+         OCCUR_HOUR = as.integer(OCCUR_TIME@hour),
+         OCCUR_MONTH = as.integer(month(OCCUR_DATE)),
+         OCCUR_YEAR = year(OCCUR_DATE),
+         STATISTICAL_MURDER_FLAG = as.logical(STATISTICAL_MURDER_FLAG),
+         SHOOTINGS = 1,
+         MURDER = as.integer(STATISTICAL_MURDER_FLAG))
+
+```
+
+## Handle Missing Data
+
+```{r missing_data}
+#Handle missing data
+
+nypd[nypd == ''] <- NA
+
+nypd <- nypd %>%
+  replace_na(list(PERP_AGE_GROUP = "UNKNOW", PERP_RACE = "UNKNOWN", PERP_SEX = "UNKNOWN",  VIC_AGE_GROUP = "UNKNOWN", VIC_SEX="UNKNOWN", VIC_RACE="UNKNOWN"))
+```
+
+
+## Borough Analysis
+
+### Barplot for total shootings in each borough
+
+```{r boro_analysis}
+#color plot
+ggplot(nypd, aes(x=as.factor(BORO), fill=as.factor(BORO))) +
+  geom_bar() +
+  scale_fill_brewer(palette = "Set1") +
+  theme(legend.position="none")
+```
+
+### Stacked barplot, split by murders vs. non-murders
+
+```{r boro_stacked_by_murder}
+#Barplot by Boro, stacked by murder
+ggplot(nypd, aes(BORO, fill = STATISTICAL_MURDER_FLAG)) +
+  geom_bar(position = "stack")
+```
+
+
+```{r stacked_percentage}
+#Barplot by Boro, stacked by murder percentage
+ggplot(nypd, aes(BORO, fill = STATISTICAL_MURDER_FLAG)) +
+  geom_bar(position = "fill")
+```
+
+
+
+## Timeseries Analysis
+
+```{r timeseries}
+#Create a new df for time series analysis
+nypd_annual <- nypd %>%
+  group_by(OCCUR_YEAR, SHOOTINGS)%>%
+  summarize(SHOOTINGS = sum(SHOOTINGS),
+            STATISTICAL_MURDER_FLAG = sum(STATISTICAL_MURDER_FLAG)) %>%
+  select(OCCUR_YEAR, SHOOTINGS, STATISTICAL_MURDER_FLAG) %>%
+  ungroup()
+
+nypd_annual_murder <- nypd %>%
+  group_by(OCCUR_YEAR, SHOOTINGS)%>%
+  summarize(SHOOTINGS = sum(SHOOTINGS),
+            MURDER = sum(MURDER)) %>%
+  select(OCCUR_YEAR, SHOOTINGS, MURDER) %>%
+  ungroup()
+  
+#Create a new df for boro time series analysis
+nypd_annual_boro <- nypd %>%
+  group_by(OCCUR_YEAR, SHOOTINGS, BORO)%>%
+  summarize(SHOOTINGS = sum(SHOOTINGS),
+            STATISTICAL_MURDER_FLAG = sum(STATISTICAL_MURDER_FLAG)) %>%
+  select(OCCUR_YEAR, BORO, SHOOTINGS, STATISTICAL_MURDER_FLAG) %>%
+  ungroup()
+
+
+#Timeseries lineplot
+ggplot(nypd_annual, aes(x=OCCUR_YEAR)) +
+  geom_line(aes(y=SHOOTINGS)) +
+  geom_point(aes(y=SHOOTINGS)) +
+  geom_line(aes(y=STATISTICAL_MURDER_FLAG), color="red") +
+  geom_point(aes(y=STATISTICAL_MURDER_FLAG), color="red") +
+  labs(title = "NYPD Shootings (Black) and Murders (Red) by Year",
+       x = "Year",
+       y = "Shootings/Murders")
+
+#Timeseries by boro
+ggplot(nypd_annual_boro, aes(x=OCCUR_YEAR, y=SHOOTINGS, color=BORO)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "NYPD Shootings by Year by Boro",
+       x = "Year",
+       y = "Shootings")
+```
+
+
+## Time of year and time of day
+
+```{r initial_barplots}
+
+#histogram by hour
+
+ggplot(nypd, aes(x=as.factor(OCCUR_HOUR))) +
+  geom_bar(fill="blue") 
+
+#histogram by month
+
+ggplot(nypd, aes(x=as.factor(OCCUR_MONTH))) +
+  geom_bar(fill="red") 
+```
+
+
+## 2D Histograms/Contour plots: Shootings by month and time of day
+
+```{r 2d_hist}
+#2d histogram by month and time of day
+fig1 <- plot_ly(x = nypd$OCCUR_HOUR, y = nypd$OCCUR_MONTH, type = "histogram2dcontour")
+
+fig1 <- fig1 %>% 
+        colorbar(title = "Shootings") %>%
+        layout(title = 'Time of Day vs. Month', plot_bgcolor = "#e5ecf6", xaxis=list(title = "Time (Local)"), yaxis = list(title = "Month"))
+
+fig1
+
+
+
+#putting it all together
+s <- subplot(
+  plot_ly(x = nypd$OCCUR_HOUR, type = "histogram"),
+  plotly_empty(),
+  plot_ly(x = nypd$OCCUR_HOUR, y = nypd$OCCUR_MONTH, type = "histogram2dcontour"),
+  plot_ly(y = nypd$OCCUR_MONTH, type = "histogram"),
+  nrows = 2, heights = c(0.2, 0.8), widths = c(0.8, 0.2), margin = 0,
+  shareX = TRUE, shareY = TRUE, titleX = FALSE, titleY = FALSE
+)
+fig <- layout(s, showlegend = FALSE)
+fig
+```
+
+
+## Conclusion and Bias Identification
+
+In this report, I did some analysis on NYPD shooting trends. There appeared to be a steady decline in both shootings and murders until 2020, when there was a sharp increase. Additionally, we examined the time of year and time of day when shootings are most likely to occur. The data show that the summertime and during the evening/nighttime hours are the most dangerous. 
+
+There are a few areas of potential bias in these data. There are likely shootings that go unreported to the NYPD, and hence would not be in this data. There may be some boroughs that report shootings at a higher rate than others. 
+
+
+
+
+
+
+
